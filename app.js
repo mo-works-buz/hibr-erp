@@ -449,11 +449,14 @@ async function openDoc(key, id, reload) {
     if (isJob && !o.title) { toast(T('title') + ' *', true); return null; }
     try {
       let did = doc?.id;
-      if (did) { await q(sb.from(D.table).update(o).eq('id', did)); }
-      else { o.number = await rpc('next_number', { p_kind: D.numberKind }); const r = await q(sb.from(D.table).insert(o).select('id').single()); did = r.id; }
+      // الفواتير/فواتير الموردين: نحفظ الرأس كمسودة أولاً، ثم البنود، ثم نعتمد الحالة
+      // حتى يجد قيد اليومية البنود عند الترحيل (يمنع خطأ Journal not balanced)
+      const finalStatus = o.status;
+      if (did) { if (isInv || isBill) { await q(sb.from(D.table).update({ ...o, status: doc.status === 'draft' ? 'draft' : doc.status }).eq('id', did)); } else { await q(sb.from(D.table).update(o).eq('id', did)); } }
+      else { o.number = await rpc('next_number', { p_kind: D.numberKind }); const ins = (isInv || isBill) ? { ...o, status: 'draft' } : o; const r = await q(sb.from(D.table).insert(ins).select('id').single()); did = r.id; }
       await q(sb.from(D.items).delete().eq(D.fk, did)); if (its.length) await q(sb.from(D.items).insert(its.map(x => ({ ...x, [D.fk]: did }))));
       if (isJob) { await q(sb.from('job_costs').delete().eq('job_order_id', did)); if (cs.length) await q(sb.from('job_costs').insert(cs.map(x => ({ ...x, job_order_id: did })))); }
-      if (isInv || isBill) { await q(sb.from(D.table).update({ total: o.total }).eq('id', did)); }
+      if (isInv || isBill) { await q(sb.from(D.table).update({ total: o.total, status: finalStatus }).eq('id', did)); }
       toast(T('saved')); delete cache.invoices_open; delete cache.bills_open; delete cache.job_orders; return did;
     } catch (e) { err(e); return null; }
   }
