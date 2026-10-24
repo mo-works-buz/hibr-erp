@@ -115,26 +115,38 @@ function docHeader(titleKey, number) {
 function docFooter() { const c = COMPANY; return `<div class="ft"><div>${esc(isAr() ? (c.invoice_terms_ar || '') : (c.invoice_terms_en || ''))}<br>${T('tax_note')}</div><div style="text-align:end">${c.bank_name ? `${T('bank_name')}: ${esc(c.bank_name)}<br>IBAN: <span class="mono">${esc(c.iban || '')}</span>` : ''}<br>${T('thanks')}</div></div>`; }
 
 /* ---------------- attachments ---------------- */
+// Employee documents live in a private bucket (hr-docs) and a finance-only table (employee_docs).
+// All other attachments keep using the shared 'attachments' bucket/table.
+const ATT_CFG = { employee: { table: 'employee_docs', bucket: 'hr-docs' } };
+const attCfg = t => ATT_CFG[t] || { table: 'attachments', bucket: 'attachments' };
 async function attachmentsPanel(refType, refId) {
   if (!refId) return '';
-  const list = await q(sb.from('attachments').select('*').eq('ref_type', refType).eq('ref_id', refId).order('created_at'));
+  const cfg = attCfg(refType); const isEmp = refType === 'employee';
+  let qb = sb.from(cfg.table).select('*');
+  qb = isEmp ? qb.eq('employee_id', refId) : qb.eq('ref_type', refType).eq('ref_id', refId);
+  const list = await q(qb.order('created_at'));
+  const docName = { civil_id: T('civil_id'), work_permit: isAr() ? 'إذن عمل' : 'Work permit', other: isAr() ? 'أخرى' : 'Other' };
   return `<div class="full card" id="attBox"><h3>${T('attachments')}</h3>
-    <div>${list.map(a => `<div class="row"><a href="#" class="link att-open" data-path="${esc(a.storage_path)}">${esc(a.file_name)}</a> <span class="muted">${(a.size / 1024).toFixed(0)} KB</span> <button class="btn sm danger att-del" data-id="${a.id}" data-path="${esc(a.storage_path)}">✕</button></div>`).join('') || `<span class="muted">${T('none')}</span>`}</div>
-    <div class="row" style="margin-top:8px"><input type="file" id="attFile" class="in" style="width:auto"><button class="btn sm sec" id="attUp">${T('upload')}</button></div></div>`;
+    <div>${list.map(a => `<div class="row"><a href="#" class="link att-open" data-path="${esc(a.storage_path)}" data-bucket="${cfg.bucket}">${esc(a.file_name)}</a> ${isEmp && a.doc_type ? `<span class="muted">${esc(docName[a.doc_type] || a.doc_type)}</span>` : ''} ${isEmp && a.expiry_date ? `<span class="muted">${T('residency_expiry')}: ${fmtD(a.expiry_date)}</span>` : ''} <span class="muted">${(a.size / 1024).toFixed(0)} KB</span> <button class="btn sm danger att-del" data-id="${a.id}" data-path="${esc(a.storage_path)}" data-bucket="${cfg.bucket}" data-table="${cfg.table}">✕</button></div>`).join('') || `<span class="muted">${T('none')}</span>`}</div>
+    <div class="row" style="margin-top:8px">${isEmp ? `<select id="attType" class="in" style="width:auto"><option value="civil_id">${docName.civil_id}</option><option value="work_permit">${docName.work_permit}</option><option value="other">${docName.other}</option></select><input type="date" id="attExp" class="in" style="width:auto" title="${T('residency_expiry')}">` : ''}<input type="file" id="attFile" class="in" style="width:auto"><button class="btn sm sec" id="attUp">${T('upload')}</button></div></div>`;
 }
 function wireAttachments(container, refType, refId, refresh) {
   const up = $('#attUp', container); if (!up) return;
+  const cfg = attCfg(refType); const isEmp = refType === 'employee';
   up.onclick = async () => {
     const f = $('#attFile', container).files[0]; if (!f) return;
     try {
       const path = `${refType}/${refId}/${Date.now()}_${f.name.replace(/[^\w.\-؀-ۿ]/g, '_')}`;
-      await q(sb.storage.from('attachments').upload(path, f));
-      await q(sb.from('attachments').insert({ ref_type: refType, ref_id: refId, file_name: f.name, storage_path: path, mime: f.type, size: f.size }));
+      await q(sb.storage.from(cfg.bucket).upload(path, f));
+      const row = isEmp
+        ? { employee_id: refId, doc_type: $('#attType', container).value, expiry_date: $('#attExp', container).value || null, file_name: f.name, storage_path: path, mime: f.type, size: f.size }
+        : { ref_type: refType, ref_id: refId, file_name: f.name, storage_path: path, mime: f.type, size: f.size };
+      await q(sb.from(cfg.table).insert(row));
       toast(T('saved')); refresh();
     } catch (e) { err(e); }
   };
-  $$('.att-open', container).forEach(a => a.onclick = async e => { e.preventDefault(); try { const d = await q(sb.storage.from('attachments').createSignedUrl(a.dataset.path, 600)); window.open(d.signedUrl, '_blank'); } catch (x) { err(x); } });
-  $$('.att-del', container).forEach(b => b.onclick = async () => { if (!await confirmDlg(T('confirm_delete'))) return; try { await sb.storage.from('attachments').remove([b.dataset.path]); await q(sb.from('attachments').delete().eq('id', b.dataset.id)); refresh(); } catch (e) { err(e); } });
+  $$('.att-open', container).forEach(a => a.onclick = async e => { e.preventDefault(); try { const d = await q(sb.storage.from(a.dataset.bucket).createSignedUrl(a.dataset.path, 600)); window.open(d.signedUrl, '_blank'); } catch (x) { err(x); } });
+  $$('.att-del', container).forEach(b => b.onclick = async () => { if (!await confirmDlg(T('confirm_delete'))) return; try { await sb.storage.from(b.dataset.bucket).remove([b.dataset.path]); await q(sb.from(b.dataset.table).delete().eq('id', b.dataset.id)); refresh(); } catch (e) { err(e); } });
 }
 
 /* ---------------- generic CRUD module ---------------- */
