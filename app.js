@@ -74,6 +74,16 @@ function modal(html, opts = {}) {
   $$('.close-modal', bg).forEach(b => b.onclick = bg.close);
   return bg;
 }
+const APPROVAL_T = { ar: { approve: 'موافقة', pin: 'الرمز السري', pin_wrong: 'الرمز غير صحيح', approved_ok: 'تم اعتماد العرض', pending: 'بانتظار الموافقة', approved: 'معتمد' }, en: { approve: 'Approve', pin: 'PIN', pin_wrong: 'Wrong PIN', approved_ok: 'Quotation approved', pending: 'Pending approval', approved: 'Approved' } };
+const AT = k => APPROVAL_T[isAr() ? 'ar' : 'en'][k] || T(k);
+function askPinAndApprove(id, docModal, reloadFn) {
+  const m = modal(`<h2>${AT('approve')}</h2><form class="form"><div class="full"><label class="f">${AT('pin')}</label><input class="in" type="password" inputmode="numeric" id="apin" autocomplete="off"></div></form><div class="actions"><button class="btn sec close-modal">${T('cancel')}</button><button class="btn ok" id="apok">${T('ok')}</button></div>`, { sm: true });
+  $('#apin', m).focus();
+  $('#apok', m).onclick = async () => {
+    try { await rpc('approve_quotation', { p_id: id, p_pin: $('#apin', m).value }); toast(AT('approved_ok')); m.close(); docModal.close(); reloadFn(); }
+    catch (e) { if (/PIN_INVALID/.test(String(e.message || e))) toast(AT('pin_wrong'), true); else err(e); }
+  };
+}
 function confirmDlg(msg) { return new Promise(res => { const m = modal(`<h2>${esc(msg)}</h2><div class="actions"><button class="btn sec close-modal">${T('cancel')}</button><button class="btn danger" id="yes">${T('ok')}</button></div>`, { sm: true }); $('#yes', m).onclick = () => { m.close(); res(true); }; m.addEventListener('click', e => { if (e.target === m) res(false); }); }); }
 function field(f, val) {
   const v = val ?? f.default ?? '';
@@ -362,7 +372,7 @@ async function contractInvoice(id) { try { const inv = await rpc('invoice_from_c
    DOCUMENTS with line items: quotations / job_orders / invoices / bills
    ============================================================ */
 const DOCS = {
-  quotations: { table: 'quotations', items: 'quotation_items', fk: 'quotation_id', numberKind: 'quotation', party: 'customer', title: 'quotations', printTitle: 'quotation', statuses: ['draft', 'sent', 'accepted', 'rejected', 'expired', 'converted'], hasDiscount: true },
+  quotations: { table: 'quotations', items: 'quotation_items', fk: 'quotation_id', numberKind: 'quotation', party: 'customer', title: 'quotations', printTitle: 'quotation', statuses: ['draft', 'pending', 'approved', 'sent', 'accepted', 'rejected', 'expired', 'converted'], hasDiscount: true },
   job_orders: { table: 'job_orders', items: 'job_order_items', fk: 'job_order_id', numberKind: 'job_order', party: 'customer', title: 'job_orders', printTitle: 'job_order', statuses: ['new', 'design', 'proof_approved', 'printing', 'finishing', 'ready', 'delivered', 'cancelled'], totalCol: 'sale_total' },
   invoices: { table: 'invoices', items: 'invoice_items', fk: 'invoice_id', numberKind: 'invoice', party: 'customer', title: 'invoices', printTitle: 'invoice', statuses: ['draft', 'issued', 'partial', 'paid', 'overdue', 'cancelled'], hasDiscount: true },
   bills: { table: 'bills', items: 'bill_items', fk: 'bill_id', numberKind: 'bill', party: 'supplier', title: 'bills', printTitle: 'bills', statuses: ['draft', 'open', 'partial', 'paid', 'cancelled'] },
@@ -402,7 +412,7 @@ async function openDoc(key, id, reload) {
   const partyList = cache[D.party + 's'];
   const partyOpts = partyList.map(p => `<option value="${p.id}" ${doc?.[D.party + '_id'] === p.id ? 'selected' : ''}>${esc(nm(p))}</option>`).join('');
   const isJob = key === 'job_orders', isInv = key === 'invoices', isBill = key === 'bills';
-  const stOpts = D.statuses.map(s => `<option value="${s}" ${(doc?.status || D.statuses[0]) === s ? 'selected' : ''}>${T(s === 'paid' ? 'paid_s' : s === 'finishing' ? 'finishing_s' : s)}</option>`).join('');
+  const stOpts = D.statuses.filter(s => key !== 'quotations' || s !== 'approved' || doc?.status === 'approved').map(s => `<option value="${s}" ${(doc?.status || D.statuses[0]) === s ? 'selected' : ''}>${AT(s === 'paid' ? 'paid_s' : s === 'finishing' ? 'finishing_s' : s)}</option>`).join('');
   const itemRow = (it = {}) => `<tr><td style="width:24%"><input class="in i-desc" list="itemsDL" value="${esc(it.description || '')}" placeholder="${T('description')}"></td><td><input class="in i-specs" value="${esc(it.specs || '')}" placeholder="${T('specs')}"></td><td style="width:90px"><input class="in i-qty" type="number" step="0.001" value="${it.qty ?? 1}"></td><td style="width:110px"><input class="in i-price" type="number" step="0.001" value="${it.unit_price ?? 0}"></td><td class="num i-total" style="width:110px">${fmt((it.qty ?? 1) * (it.unit_price ?? 0))}</td><td style="width:34px"><button class="btn sm danger rm">✕</button></td></tr>`;
   const costRow = (c = {}) => `<tr><td><select class="in c-type">${['paper', 'ink', 'outsourcing', 'labor', 'machine', 'other'].map(v => `<option value="${v}" ${c.cost_type === v ? 'selected' : ''}>${T(v === 'paper' ? 'paper_c' : v)}</option>`).join('')}</select></td><td><input class="in c-desc" value="${esc(c.description || '')}"></td><td style="width:90px"><input class="in c-qty" type="number" step="0.001" value="${c.qty ?? 1}"></td><td style="width:110px"><input class="in c-cost" type="number" step="0.001" value="${c.unit_cost ?? 0}"></td><td class="num c-total" style="width:110px">${fmt((c.qty ?? 1) * (c.unit_cost ?? 0))}</td><td style="width:34px"><button class="btn sm danger rmc">✕</button></td></tr>`;
   const head = `
@@ -425,8 +435,9 @@ async function openDoc(key, id, reload) {
     ${isJob ? `<h3 style="margin:14px 0 6px;color:var(--brown)">${T('costs')} <span class="muted" style="font-weight:400;font-size:12px">(Job costing)</span></h3><table class="items"><thead><tr><th>${T('cost_type')}</th><th>${T('description')}</th><th class="num">${T('qty')}</th><th class="num">${T('unit_cost')}</th><th class="num">${T('total')}</th><th></th></tr></thead><tbody id="cbody">${costs.map(costRow).join('')}</tbody></table><div class="row" style="margin-top:6px"><button class="btn sm sec" id="addCost">＋ ${T('add_cost')}</button><span class="grow"></span><b id="c-summary"></b></div>` : ''}
     <div class="form" style="margin-top:12px"><div class="full"><label class="f">${T('notes')}</label><textarea class="in" id="d-notes">${esc(doc?.notes || '')}</textarea></div></div>
     <div id="attSlot"></div>`;
-  const actions = `${doc ? `<button class="btn sec" id="d-print">${T('print')}</button>` : ''}
-    ${doc && key === 'quotations' && doc.status !== 'converted' ? `<button class="btn ok" id="d-tojob">${T('convert_to_job')}</button>` : ''}
+  const actions = `${doc && (key !== 'quotations' || doc.status === 'approved') ? `<button class="btn sec" id="d-print">${T('print')}</button>` : ''}
+    ${doc && key === 'quotations' && doc.status === 'pending' ? `<button class="btn ok" id="d-approve">${AT('approve')}</button>` : ''}
+    ${doc && key === 'quotations' && doc.status === 'approved' ? `<button class="btn ok" id="d-tojob">${T('convert_to_job')}</button>` : ''}
     ${doc && isJob && !doc.invoice_id ? `<button class="btn ok" id="d-toinv">${T('create_invoice')}</button>` : ''}${doc && isJob && doc.invoice_id ? `<button class="btn sec" id="d-openinv">${T('invoice')}</button>` : ''}
     ${doc && isInv && !['paid', 'cancelled', 'draft'].includes(doc.status) ? `<button class="btn warn" id="d-pay">${T('add_receipt')}</button>` : ''}
     ${doc && isBill && !['paid', 'cancelled', 'draft'].includes(doc.status) ? `<button class="btn warn" id="d-pay">${T('supplier_payments')}</button>` : ''}
@@ -473,6 +484,7 @@ async function openDoc(key, id, reload) {
     } catch (e) { err(e); return null; }
   }
   $('#d-save', m).onclick = async () => { const did = await save(); if (did) { m.close(); reload(); } };
+  if ($('#d-approve', m)) $('#d-approve', m).onclick = () => askPinAndApprove(doc.id, m, reload);
   if ($('#d-print', m)) $('#d-print', m).onclick = async () => { const did = await save(); if (did) printDoc(key, did); };
   if ($('#d-del', m)) $('#d-del', m).onclick = async () => { if (!await confirmDlg(T('confirm_delete'))) return; try { await q(sb.from(D.table).delete().eq('id', doc.id)); toast(T('deleted')); m.close(); reload(); } catch (e) { err(e); } };
   if ($('#d-tojob', m)) $('#d-tojob', m).onclick = async () => { if (!await save()) return; try { const j = await rpc('quote_to_job', { p_quote: doc.id }); m.close(); go('job_orders'); setTimeout(() => openDoc('job_orders', j), 400); } catch (e) { err(e); } };
