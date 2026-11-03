@@ -417,7 +417,7 @@ async function openDoc(key, id, reload) {
   const costRow = (c = {}) => `<tr><td><select class="in c-type">${['paper', 'ink', 'outsourcing', 'labor', 'machine', 'other'].map(v => `<option value="${v}" ${c.cost_type === v ? 'selected' : ''}>${T(v === 'paper' ? 'paper_c' : v)}</option>`).join('')}</select></td><td><input class="in c-desc" value="${esc(c.description || '')}"></td><td style="width:90px"><input class="in c-qty" type="number" step="0.001" value="${c.qty ?? 1}"></td><td style="width:110px"><input class="in c-cost" type="number" step="0.001" value="${c.unit_cost ?? 0}"></td><td class="num c-total" style="width:110px">${fmt((c.qty ?? 1) * (c.unit_cost ?? 0))}</td><td style="width:34px"><button class="btn sm danger rmc">✕</button></td></tr>`;
   const head = `
     <div class="form">
-      <div><label class="f">${T('number')}</label><input class="in" value="${esc(doc?.number || (isAr() ? 'تلقائي' : 'auto'))}" readonly></div>
+      <div><label class="f">${T('number')}</label>${isInv ? `<input class="in" id="d-number" value="${esc(doc?.number || '')}" placeholder="${isAr() ? 'تلقائي' : 'auto'}" dir="ltr">` : `<input class="in" value="${esc(doc?.number || (isAr() ? 'تلقائي' : 'auto'))}" readonly>`}</div>
       <div><label class="f">${T(D.party)} *</label><select class="in" id="d-party" required><option value="">—</option>${partyOpts}</select></div>
       <div><label class="f">${T('date')}</label><input class="in" type="date" id="d-date" value="${doc?.date || today()}"></div>
       ${isJob ? `<div><label class="f">${T('due_date')}</label><input class="in" type="date" id="d-due" value="${doc?.due_date || ''}"></div>` : (key === 'quotations' ? `<div><label class="f">${T('valid_until')}</label><input class="in" type="date" id="d-due" value="${doc?.valid_until || addDays(today(), 15)}"></div>` : `<div><label class="f">${T('due_date')}</label><input class="in" type="date" id="d-due" value="${doc?.due_date || addDays(today(), 30)}"></div>`)}
@@ -468,6 +468,7 @@ async function openDoc(key, id, reload) {
   };
   async function save() {
     const { o, its, cs } = collect();
+    if (isInv) { let t = ($('#d-number', m)?.value || '').trim(); if (/^\d+$/.test(t)) t = `INV-${new Date().getFullYear()}-${t.padStart(4, '0')}`; if (t) o.number = t; }
     if (!o[D.party + '_id'] && key !== 'quotations') { toast(T(D.party) + ' *', true); return null; }
     if (isJob && !o.title) { toast(T('title') + ' *', true); return null; }
     try {
@@ -476,7 +477,7 @@ async function openDoc(key, id, reload) {
       // حتى يجد قيد اليومية البنود عند الترحيل (يمنع خطأ Journal not balanced)
       const finalStatus = o.status;
       if (did) { if (isInv || isBill) { await q(sb.from(D.table).update({ ...o, status: doc.status === 'draft' ? 'draft' : doc.status }).eq('id', did)); } else { await q(sb.from(D.table).update(o).eq('id', did)); } }
-      else { o.number = await rpc('next_number', { p_kind: D.numberKind }); const ins = (isInv || isBill) ? { ...o, status: 'draft' } : o; const r = await q(sb.from(D.table).insert(ins).select('id').single()); did = r.id; }
+      else { if (!o.number) o.number = await rpc('next_number', { p_kind: D.numberKind }); const ins = (isInv || isBill) ? { ...o, status: 'draft' } : o; const r = await q(sb.from(D.table).insert(ins).select('id').single()); did = r.id; }
       await q(sb.from(D.items).delete().eq(D.fk, did)); if (its.length) await q(sb.from(D.items).insert(its.map(x => ({ ...x, [D.fk]: did }))));
       if (isJob) { await q(sb.from('job_costs').delete().eq('job_order_id', did)); if (cs.length) await q(sb.from('job_costs').insert(cs.map(x => ({ ...x, job_order_id: did })))); }
       if (isInv || isBill) { await q(sb.from(D.table).update({ total: o.total, status: finalStatus }).eq('id', did)); }
