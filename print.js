@@ -9,7 +9,7 @@
     const doc = await q(sb.from(D.table).select(`*, ${D.party}s(name,name_en,phone,email,address,cr_number,contact_person)`).eq('id', id).single());
     const items = await q(sb.from(D.items).select('*').eq(D.fk, id).order('sort'));
     const p = doc[D.party + 's'] || {};
-    const isJob = key === 'job_orders', isInv = key === 'invoices';
+    const isJob = key === 'job_orders', isInv = key === 'invoices', isDN = key === 'delivery_notes';
     let extra = '';
     if (isInv) {
       const rc = await q(sb.from('receipts').select('number,date,amount,method,reference').eq('invoice_id', id).order('date'));
@@ -28,11 +28,11 @@
       <div style="grid-column:1/-1"><b>${T('subject')}</b>${esc(doc.subject || doc.title || doc.description || '')}</div>${specs}${extra}
       ${isInv ? `<div><b>${T('status')}</b>${T(doc.status === 'paid' ? 'paid_s' : doc.status)}</div>` : ''}
     </div>
-    <table><thead><tr><th style="width:30px">#</th><th>${T('description')}</th><th>${T('specs')}</th><th class="num">${T('qty')}</th><th class="num">${T('unit_price')}</th><th class="num">${T('total')}</th></tr></thead><tbody>${items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.description)}</td><td>${esc(it.specs || '')}</td><td class="num">${Number(it.qty).toLocaleString()}</td><td class="num">${fmt(it.unit_price)}</td><td class="num">${fmt(it.total)}</td></tr>`).join('')}</tbody></table>
-    <table class="tot"><tr><td>${T('subtotal')}</td><td class="num">${fmt(doc.subtotal ?? total)}</td></tr>${doc.discount ? `<tr><td>${T('discount')}</td><td class="num">-${fmt(doc.discount)}</td></tr>` : ''}<tr class="g"><td>${T('total')} (${T('kwd')})</td><td class="num">${fmt(total)}</td></tr>${doc.paid ? `<tr><td>${T('paid')}</td><td class="num">${fmt(doc.paid)}</td></tr><tr><td>${T('balance')}</td><td class="num">${fmt(total - doc.paid)}</td></tr>` : ''}</table>
+    <table><thead><tr><th style="width:30px">#</th><th>${T('description')}</th><th>${T('specs')}</th><th class="num">${T('qty')}</th>${isDN ? '' : `<th class="num">${T('unit_price')}</th><th class="num">${T('total')}</th>`}</tr></thead><tbody>${items.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.description)}</td><td>${esc(it.specs || '')}</td><td class="num">${Number(it.qty).toLocaleString()}</td>${isDN ? '' : `<td class="num">${fmt(it.unit_price)}</td><td class="num">${fmt(it.total)}</td>`}</tr>`).join('')}</tbody></table>
+    ${isDN ? '' : `<table class="tot"><tr><td>${T('subtotal')}</td><td class="num">${fmt(doc.subtotal ?? total)}</td></tr>${doc.discount ? `<tr><td>${T('discount')}</td><td class="num">-${fmt(doc.discount)}</td></tr>` : ''}<tr class="g"><td>${T('total')} (${T('kwd')})</td><td class="num">${fmt(total)}</td></tr>${doc.paid ? `<tr><td>${T('paid')}</td><td class="num">${fmt(doc.paid)}</td></tr><tr><td>${T('balance')}</td><td class="num">${fmt(total - doc.paid)}</td></tr>` : ''}</table>`}
     ${doc.status === 'paid' ? `<div class="stamp">${T('paid_s')}</div>` : ''}
     ${doc.notes ? `<p style="margin-top:10px"><b>${T('notes')}:</b> ${esc(doc.notes)}</p>` : ''}
-    <div class="sig"><div>${isAr() ? 'المستلم' : 'Received by'}</div><div>${esc(isAr() ? COMPANY.name_ar : COMPANY.name_en)}</div></div>${docFooter()}`;
+    <div class="sig"><div>${isAr() ? 'المستلم' : 'Received by'}</div><div>${esc(isAr() ? COMPANY.name_ar : COMPANY.name_en)}</div></div>${isDN ? `<div class="ft"><div></div><div style="text-align:end">${T('thanks')}</div></div>` : docFooter()}`;
     printHTML(isInv ? twoCopies(body) : body);
   };
 
