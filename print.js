@@ -16,6 +16,10 @@
       if (doc.job_order_id) { const j = await q(sb.from('job_orders').select('number').eq('id', doc.job_order_id).single()); extra += `<div><b>${T('job_order')}</b><span class="mono">${esc(j.number)}</span></div>`; }
       if (rc.length) extra += `<div style="grid-column:1/-1"><b>${T('receipts')}</b>${rc.map(r => `<span class="mono">${esc(r.number)}</span> ${fmtD(r.date)} — ${fmt(r.amount)} (${T(r.method)}${r.reference ? ' ' + esc(r.reference) : ''})`).join(' · ')}</div>`;
     }
+    if (isDN) {
+      if (doc.job_order_id) { const j = await q(sb.from('job_orders').select('number').eq('id', doc.job_order_id).single()); extra += `<div><b>${T('job_order')}</b><span class="mono">${esc(j.number)}</span></div>`; }
+      if (doc.invoice_id) { const iv = await q(sb.from('invoices').select('number').eq('id', doc.invoice_id).single()); extra += `<div><b>${T('invoice')}</b><span class="mono">${esc(iv.number)}</span></div>`; }
+    }
     const specs = isJob ? [['size', doc.size], ['paper', doc.paper], ['colors', doc.colors], ['sides', doc.sides], ['finishing', doc.finishing], ['quantity', doc.quantity]].filter(x => x[1]).map(x => `<div><b>${T(x[0])}</b>${esc(x[1])}</div>`).join('') : '';
     const total = doc.total ?? doc.sale_total ?? 0;
     const body = `${docHeader(D.printTitle, doc.number)}
