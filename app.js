@@ -26,6 +26,8 @@ const I18N = {
   }
 };
 const T = k => (I18N[LANG][k] ?? I18N.en[k] ?? k);
+Object.assign(I18N.ar, { delivery_notes: 'إذن تسليم (باكينج سليب)', delivery_note: 'إذن تسليم', link_job: 'أمر الشغل المرتبط', link_invoice: 'الفاتورة المرتبطة', delivered: 'تم التسليم' });
+Object.assign(I18N.en, { delivery_notes: 'Delivery notes (packing slips)', delivery_note: 'Delivery note', link_job: 'Linked job order', link_invoice: 'Linked invoice', delivered: 'Delivered' });
 const isAr = () => LANG === 'ar';
 
 /* ---------------- utils ---------------- */
@@ -56,6 +58,7 @@ async function loadCache(name, force) {
     invoices_open: () => sb.from('invoices').select('id,number,customer_id,total,paid,status').in('status', ['issued', 'partial', 'overdue']).order('date', { ascending: false }),
     bills_open: () => sb.from('bills').select('id,number,supplier_id,total,paid,status').in('status', ['open', 'partial']).order('date', { ascending: false }),
     job_orders: () => sb.from('job_orders').select('id,number,title,customer_id').order('date', { ascending: false }).limit(300),
+    invoices: () => sb.from('invoices').select('id,number,customer_id,total').order('date', { ascending: false }).limit(300),
   };
   cache[name] = await q(map[name]()); return cache[name];
 }
@@ -376,6 +379,7 @@ const DOCS = {
   job_orders: { table: 'job_orders', items: 'job_order_items', fk: 'job_order_id', numberKind: 'job_order', party: 'customer', title: 'job_orders', printTitle: 'job_order', statuses: ['new', 'design', 'proof_approved', 'printing', 'finishing', 'ready', 'delivered', 'cancelled'], totalCol: 'sale_total' },
   invoices: { table: 'invoices', items: 'invoice_items', fk: 'invoice_id', numberKind: 'invoice', party: 'customer', title: 'invoices', printTitle: 'invoice', statuses: ['draft', 'issued', 'partial', 'paid', 'overdue', 'cancelled'], hasDiscount: true },
   bills: { table: 'bills', items: 'bill_items', fk: 'bill_id', numberKind: 'bill', party: 'supplier', title: 'bills', printTitle: 'bills', statuses: ['draft', 'open', 'partial', 'paid', 'cancelled'] },
+  delivery_notes: { table: 'delivery_notes', items: 'delivery_note_items', fk: 'delivery_note_id', numberKind: 'delivery_note', party: 'customer', title: 'delivery_notes', printTitle: 'delivery_note', statuses: ['draft', 'issued', 'delivered', 'cancelled'] },
 };
 async function docPage(key) {
   const D = DOCS[key]; const el = $('#page'); let rows = [], search = '', st = '';
@@ -405,6 +409,7 @@ async function docPage(key) {
 async function openDoc(key, id, reload) {
   const D = DOCS[key]; reload = reload || (() => go(key));
   await loadCache('customers'); await loadCache('suppliers'); await loadCache('items'); await loadCache('accounts'); if (key === 'job_orders') { await loadCache('profiles'); await loadCache('suppliers'); }
+  if (key === 'delivery_notes') { await loadCache('job_orders'); await loadCache('invoices'); }
   let doc = id ? await q(sb.from(D.table).select('*').eq('id', id).single()) : null;
   let items = id ? await q(sb.from(D.items).select('*').eq(D.fk, id).order('sort')) : [];
   let costs = (key === 'job_orders' && id) ? await q(sb.from('job_costs').select('*').eq('job_order_id', id).order('date')) : [];
@@ -418,7 +423,7 @@ async function openDoc(key, id, reload) {
   const head = `
     <div class="form">
       <div><label class="f">${T('number')}</label>${isInv ? `<input class="in" id="d-number" value="${esc(doc?.number || '')}" placeholder="${isAr() ? 'تلقائي' : 'auto'}" dir="ltr">` : `<input class="in" value="${esc(doc?.number || (isAr() ? 'تلقائي' : 'auto'))}" readonly>`}</div>
-      <div><label class="f">${T(D.party)} *</label><select class="in" id="d-party" required><option value="">—</option>${partyOpts}</select></div>
+      <div><label class="f">${T(D.party)} *</label><select class="in" id="d-party" required><option value="">—</option>${partyOpts}</select></div>${key === 'delivery_notes' ? `<div><label class="f">${T('link_job')}</label><select class="in" id="d-job"><option value="">—</option>${cache.job_orders.map(j => `<option value="${j.id}" ${doc?.job_order_id === j.id ? 'selected' : ''}>${esc(j.number)}${j.title ? ' — ' + esc(j.title) : ''}</option>`).join('')}</select></div><div><label class="f">${T('link_invoice')}</label><select class="in" id="d-inv"><option value="">—</option>${cache.invoices.map(i => `<option value="${i.id}" ${doc?.invoice_id === i.id ? 'selected' : ''}>${esc(i.number)}</option>`).join('')}</select></div>` : ''}
       <div><label class="f">${T('date')}</label><input class="in" type="date" id="d-date" value="${doc?.date || today()}"></div>
       ${isJob ? `<div><label class="f">${T('due_date')}</label><input class="in" type="date" id="d-due" value="${doc?.due_date || ''}"></div>` : (key === 'quotations' ? `<div><label class="f">${T('valid_until')}</label><input class="in" type="date" id="d-due" value="${doc?.valid_until || addDays(today(), 15)}"></div>` : `<div><label class="f">${T('due_date')}</label><input class="in" type="date" id="d-due" value="${doc?.due_date || addDays(today(), 30)}"></div>`)}
       <div><label class="f">${T('status')}</label><select class="in" id="d-status">${stOpts}</select></div>
@@ -458,11 +463,12 @@ async function openDoc(key, id, reload) {
   const collect = () => {
     const o = { date: $('#d-date', m).value, status: $('#d-status', m).value, notes: $('#d-notes', m).value || null };
     o[D.party + '_id'] = $('#d-party', m).value || null;
+    if (key === 'delivery_notes') { o.job_order_id = $('#d-job', m).value || null; o.invoice_id = $('#d-inv', m).value || null; }
     const its = $$('#ibody tr', m).map((tr, i) => ({ description: $('.i-desc', tr).value, specs: $('.i-specs', tr).value || null, qty: Number($('.i-qty', tr).value || 0), unit_price: Number($('.i-price', tr).value || 0), total: Number($('.i-qty', tr).value || 0) * Number($('.i-price', tr).value || 0), sort: i })).filter(x => x.description);
     const sub = its.reduce((a, x) => a + x.total, 0);
     if (isJob) { Object.assign(o, { title: $('#d-subject', m).value, due_date: $('#d-due', m).value || null, size: $('#j-size', m).value || null, paper: $('#j-paper', m).value || null, colors: $('#j-colors', m).value || null, sides: $('#j-sides', m).value || null, finishing: $('#j-fin', m).value || null, quantity: $('#j-qty', m).value || null, assigned_to: $('#d-assigned', m).value || null, sale_total: sub }); }
     else if (isBill) { Object.assign(o, { description: $('#d-subject', m).value || null, due_date: $('#d-due', m).value || null, supplier_ref: $('#d-ref', m).value || null, expense_account: $('#d-acc', m).value, total: sub }); }
-    else { const disc = Number($('#d-disc', m).value || 0); Object.assign(o, { subject: $('#d-subject', m).value || null, subtotal: sub, discount: disc, total: sub - disc }); if (key === 'quotations') o.valid_until = $('#d-due', m).value || null; else o.due_date = $('#d-due', m).value || null; }
+    else { const disc = D.hasDiscount ? Number($('#d-disc', m).value || 0) : 0; Object.assign(o, { subject: $('#d-subject', m).value || null, subtotal: sub, discount: disc, total: sub - disc }); if (key === 'quotations') o.valid_until = $('#d-due', m).value || null; else o.due_date = $('#d-due', m).value || null; }
     const cs = isJob ? $$('#cbody tr', m).map(tr => ({ cost_type: $('.c-type', tr).value, description: $('.c-desc', tr).value || null, qty: Number($('.c-qty', tr).value || 0), unit_cost: Number($('.c-cost', tr).value || 0), total: Number($('.c-qty', tr).value || 0) * Number($('.c-cost', tr).value || 0) })) : [];
     return { o, its, cs };
   };
@@ -665,7 +671,7 @@ async function usersPage() {
    ============================================================ */
 const NAV = [
   { grp: 'dashboard', items: [['dashboard', 'dashboard']] },
-  { grp: 'sales', items: [['customers', 'customers'], ['quotations', 'quotations'], ['job_orders', 'job_orders'], ['invoices', 'invoices'], ['receipts', 'receipts'], ['contracts', 'contracts']] },
+  { grp: 'sales', items: [['customers', 'customers'], ['quotations', 'quotations'], ['job_orders', 'job_orders'], ['invoices', 'invoices'], ['receipts', 'receipts'], ['delivery_notes', 'delivery_notes'], ['contracts', 'contracts']] },
   { grp: 'purchases', items: [['suppliers', 'suppliers'], ['bills', 'bills', 'finance'], ['supplier_payments', 'supplier_payments', 'finance'], ['expenses', 'expenses', 'finance']] },
   { grp: 'inventory', items: [['items', 'items'], ['stock_moves', 'stock_moves']] },
   { grp: 'hr', items: [['employees', 'employees', 'finance'], ['advances', 'advances', 'finance'], ['leaves', 'leaves', 'finance'], ['payroll', 'payroll', 'finance']] },
